@@ -1,0 +1,27 @@
+# === File Rahasia & Lingkungan ===
+# Abaikan file environment yang berisi kunci API
+.env
+venv/
+.venv/
+
+# === Cache Python ===
+# Abaikan folder cache
+__pycache__/
+*.pyc
+*.pyo
+
+# === Model Besar ===
+# Abaikan file model yang sudah dilatih.
+/models/*.joblib
+
+# === Data Besar & Sensitif ===
+# 1. Abaikan SEMUA file CSV di dalam folder /data/
+data/*.csv
+
+# 2. KECUALIKAN file CSV konfigurasi yang KECIL dan AMAN
+# Tanda '!' berarti "Jangan abaikan file ini"
+!data/trucks.csv
+!data/excavators.csv
+!data/operators.csv
+!data/road_segments.csv
+!data/maintenance_logs.csv

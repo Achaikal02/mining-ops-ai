@@ -1,0 +1,146 @@
+==================================================================================
+INSTRUKSI - UNTUK TIM MACHINE LEARNING (ML)
+==================================================================================
+Proyek: Mining Value Chain Optimization
+Penulis: Haikal
+Versi: 2.0 (Hybrid SimPy + 3 Model ML + Ollama)
+
+Dokumen ini menjelaskan arsitektur ML final dan cara merawat,
+melatih ulang (retraining), dan mengembangkannya.
+
+==================================================================================
+ARSITEKTUR FINAL KITA
+==================================================================================
+
+Sistem kita adalah "Simulasi Hybrid" yang canggih. Penting untuk dipahami
+bahwa kita TIDAK memprediksi profit secara langsung.
+
+1.  MESIN SIMULASI (SimPy di simulator.py):
+    -   Mengelola antrian (bottleneck) di excavator secara dinamis.
+    -   Menggunakan data kalibrasi (rata-rata aktual) untuk durasi fisik
+        (hauling, loading, return, dumping).
+
+2.  OTAK PREDIKSI (3 Model ML di /models):
+    -   Kita melatih 3 model terpisah dari data historis:
+        1.  model_fuel.joblib: Memprediksi konsumsi BBM per siklus.
+        2.  model_load_weight.joblib: Memprediksi tonase muatan per siklus.
+        3.  model_delay_probability.joblib: Memprediksi risiko insiden per siklus.
+    -   Simulasi (poin 1) memanggil 3 model ini di SETIAP siklus untuk
+        menghitung biaya dan pendapatan yang realistis.
+
+3.  AGEN CHATBOT (Ollama di simulator.py):
+    -   Menggunakan model `llama3:8b` (lokal) untuk menganalisis hasil
+        simulasi dan menjawab pertanyaan user.
+
+==================================================================================
+ALUR KERJA UTAMA (SETIAP ADA DATA BARU)
+==================================================================================
+
+Setiap kali klien memberikan data baru (misal: `hauling_activities.csv`
+baru untuk bulan lalu), kita HARUS melatih ulang model kita agar
+tetap akurat.
+
+JANGAN mengubah `simulator.py` atau `api.py`. Cukup jalankan 2 script ini
+secara berurutan:
+
+SETUP LINGKUNGAN PYTHON:
+    -   Sangat disarankan menggunakan virtual environment:
+        >> python -m venv venv
+        >> source venv/bin/activate  (atau .\venv\Scripts\activate di Windows)
+    -   Instal semua dependensi dari requirements:
+        >> pip install -r requirements.txt
+    -   (Ini akan menginstal fastapi, uvicorn, pandas, simpy, joblib, scikit-learn, ollama).
+
+---
+LANGKAH 1: JALANKAN `create_training_data.py`
+---
+-   Perintah: `python create_training_data.py`
+-   Tujuan: Script ini akan memuat SEMUA file CSV mentah di folder `/data`
+    (termasuk data baru Anda) dan menggabungkannya menjadi satu
+    file "data matang" baru: `/data/final_training_data_real.csv`.
+-   Script ini melakukan semua 'join' tabel dan 'feature engineering'
+    (seperti menghitung `truck_age_days`, `days_since_last_maintenance`, dll).
+
+---
+LANGKAH 2: JALANKAN `train_models.py`
+---
+-   Perintah: `python train_models.py`
+-   Tujuan: Script ini memuat `final_training_data_real.csv` yang baru
+    dibuat dan melatih ulang 3 model ML kita (Fuel, Load, Delay).
+-   Script ini akan menimpa (overwrite) file-file di folder `/models`
+    dengan versi baru yang lebih pintar:
+    -   `model_fuel.joblib`
+    -   `model_load_weight.joblib`
+    -   `model_delay_probability.joblib`
+    -   `numerical_columns.json`
+    -   `categorical_columns.json`
+
+---
+LANGKAH 3: RESTART API
+---
+-   Setelah model baru dibuat, Tim Back-End hanya perlu me-restart
+    server `api.py`.
+-   API akan secara otomatis memuat "otak" baru yang sudah dilatih
+    pada data terbaru.
+
+==================================================================================
+CARA MELAKUKAN UPGRADE & EKSPERIMEN
+==================================================================================
+
+Tugas kita adalah terus meningkatkan akurasi.
+
+---
+A. CARA MENAMBAH FITUR BARU (Contoh: 'jam_operasi_shift_ini')
+---
+1.  Buka `create_training_data.py`:
+    -   Tambahkan logika Anda di bagian "Rekayasa Fitur".
+    -   Pastikan kolom baru Anda (`jam_operasi_shift_ini`) disimpan
+        di `final_training_data_real.csv`.
+2.  Buka `train_models.py`:
+    -   Tambahkan nama kolom baru Anda ke daftar `numerical_features`
+        atau `categorical_features`.
+3.  Jalankan `train_models.py`:
+    -   Script ini akan secara otomatis melatih ulang model dengan
+        fitur baru Anda dan memperbarui file `.json` konfigurasi kolom.
+4.  Buka `simulator.py`:
+    -   Pastikan fungsi `get_features_for_prediction` juga
+        membuat fitur baru tersebut untuk "disuapkan" ke model.
+5.  Uji:
+    -   Jalankan `simulator.py` (test bench) untuk memastikan tidak ada
+        yang rusak.
+
+---
+B. CARA MENGGANTI MODEL DURASI (Upgrade V3.0)
+---
+-   Saat ini, kita MENGKALIBRASI durasi (misal: `avg_hauling_menit = 31.76`).
+-   Jika kita berhasil mendapatkan data durasi yang bersih dan model
+    `haulingDuration` (R² 0.88+) kita sudah stabil, kita bisa
+    mengaktifkannya kembali.
+-   Caranya:
+    1.  Buka `simulator.py`.
+    2.  Cari `truck_process_hybrid`.
+    3.  Ganti baris kalibrasi (misal: `yield env.timeout(avg_hauling_menit / 60.0)`)
+        dengan panggilan ke `MODEL_HAULING.predict(X_features)`.
+
+==================================================================================
+PANDUAN FILE PENTING (CODEBASE)
+==================================================================================
+
+-   `create_training_data.py`:
+    "Koki". Tugas: Menggabungkan CSV mentah.
+    Output: `final_training_data_real.csv`
+
+-   `train_models.py`:
+    "Pelatih". Tugas: Membaca data matang, melatih 3 model.
+    Output: File-file di `/models`
+
+-   `simulator.py`:
+    "Otak". Tugas: Memuat model, menjalankan simulasi hybrid,
+    menjalankan agen, dan menjalankan chatbot.
+    Ini adalah "Test Bench" lokal kita.
+
+-   `api.py`:
+    "Server". Tugas: Hanya mengimpor fungsi dari `simulator.py` dan
+    menyediakannya sebagai endpoint HTTP untuk Front-End.
+
+==================================================================================
