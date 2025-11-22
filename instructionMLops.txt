@@ -1,0 +1,171 @@
+==================================================================================
+HANDOFF GUIDE: MLOps & DEPLOYMENT STRATEGY
+==================================================================================
+
+Dokumen ini berisi panduan teknis untuk Containerization, Deployment,
+dan Monitoring sistem AI Mining Optimization.
+
+==================================================================================
+1. ARSITEKTUR SISTEM (OVERVIEW)
+==================================================================================
+
+Aplikasi ini BUKAN model ML statis biasa. Ini adalah sistem dinamis yang terdiri dari:
+
+A. CORE ENGINE (Python):
+   - FastAPI Server (`api.py`).
+   - Hybrid Simulator (`simulator.py`) yang menggabungkan SimPy (Discrete Event Sim)
+     dan Scikit-Learn Models (.joblib).
+
+B. INFERENCE ENGINE (Ollama):
+   - Menjalankan Large Language Model (LLM) secara LOKAL.
+   - Model: `qwen2.5:7b`.
+   - Berfungsi sebagai "Chatbot Analyst" untuk menjelaskan hasil simulasi.
+
+C. DATA LAYER:
+   - File CSV mentah di folder `/data`.
+   - Model terkompilasi di folder `/models`.
+
+Resource Requirement:
+- CPU: Multi-core (Simulasi SimPy bersifat CPU-bound).
+- RAM: Min 8GB (Untuk memuat DataFrame & Model).
+- GPU: Disarankan untuk Ollama agar respon Chatbot cepat (< 3 detik).
+
+==================================================================================
+2. CONTAINERIZATION (DOCKER STRATEGY)
+==================================================================================
+
+Kita menggunakan pendekatan Microservices dengan Docker Compose:
+1. Service API (Python App)
+2. Service LLM (Ollama)
+
+---
+A. DOCKERFILE (Untuk Service API)
+---
+Buat file bernama `Dockerfile` di root folder:
+
+# ----------------------------------------
+FROM python:3.10-slim
+
+# Install system dependencies (jika perlu)
+RUN apt-get update && apt-get install -y curl
+
+# Set working directory
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy Application Code & Data
+COPY . .
+
+# Expose Port FastAPI
+EXPOSE 8000
+
+# Healthcheck (Opsional tapi disarankan)
+HEALTHCHECK CMD curl --fail http://localhost:8000/ || exit 1
+
+# Run Command
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+# ----------------------------------------
+
+---
+B. DOCKER COMPOSE (Orkestrasi)
+---
+Buat file bernama `docker-compose.yml`:
+
+# ----------------------------------------
+version: '3.8'
+
+services:
+  mining-api:
+    build: .
+    container_name: mining-ops-api
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data       # Persistence: Agar CSV bisa diupdate tanpa rebuild
+      - ./models:/app/models   # Persistence: Agar Model bisa diganti tanpa rebuild
+      - ./logs:/app/logs       # Untuk menyimpan log monitoring
+    environment:
+      - OLLAMA_HOST=http://ollama-service:11434
+    depends_on:
+      - ollama-service
+
+  ollama-service:
+    image: ollama/ollama:latest
+    container_name: mining-ops-llm
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    # Uncomment di bawah jika server punya GPU (NVIDIA)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_storage:
+# ----------------------------------------
+
+Catatan Penting Deploy:
+Setelah container `ollama-service` menyala pertama kali, Anda WAJIB masuk ke
+dalam container dan menarik modelnya:
+>> docker exec -it mining-ops-llm ollama pull llama3:8b
+
+==================================================================================
+3. MONITORING & OBSERVABILITY STRATEGY
+==================================================================================
+
+Sistem ini membutuhkan 2 layer monitoring.
+
+A. SERVICE MONITORING (Kesehatan IT)
+   - Tools: Prometheus + Grafana.
+   - Metrik Kunci:
+     1. Latency /get_top_3_strategies (Simulasi berat, target < 5 detik).
+     2. Latency /ask_chatbot (LLM Inference, target < 10 detik).
+     3. Error Rate (HTTP 500).
+   - Implementasi: Pasang `prometheus-fastapi-instrumentator` di `api.py`.
+
+B. MODEL MONITORING (Kesehatan Data)
+   - Tools: Evidently AI (atau Logging CSV sederhana untuk tahap awal).
+   - Apa yang harus dipantau?
+     1. Data Drift: Apakah distribusi input (misal: `weatherCondition`) berubah drastis
+        dibanding data training? (Contoh: Tiba-tiba ada badai salju yang tidak dikenal).
+     2. Prediction Drift: Apakah output model (`pred_bbm`) bergeser rata-ratanya?
+   - Implementasi Awal:
+     Update `simulator.py` untuk menyimpan setiap input & prediksi ke file
+     `/logs/prediction_logs.csv`.
+
+==================================================================================
+4. AUTOMATED RETRAINING PIPELINE (CI/CD FOR ML)
+==================================================================================
+
+Model ini akan "basi" (stale) seiring berjalannya waktu.
+Berikut adalah SOP untuk update model:
+
+TRIGGER:
+- Klien mengirim data `hauling_activities.csv` baru (misal: Data bulan lalu).
+
+ACTION (PIPELINE):
+1.  Upload file CSV baru ke folder `/data` di server (via volume mapping).
+2.  Jalankan Script 1 (Data Prep):
+    >> docker exec mining-ops-api python create_training_data.py
+    (Ini akan membuat `final_training_data_real.csv` baru).
+    
+3.  Jalankan Script 2 (Training):
+    >> docker exec mining-ops-api python train_models.py
+    (Ini akan melatih ulang model dan menimpa file .joblib di folder `/models`).
+
+4.  Validasi Otomatis (Opsional tapi disarankan):
+    Tambahkan script untuk mengecek apakah R2 Score model baru > 0.8.
+    Jika YA -> Lanjut. Jika TIDAK -> Rollback.
+
+5.  Restart API:
+    >> docker restart mining-ops-api
+    (API akan otomatis memuat model .joblib versi terbaru saat startup).

@@ -47,7 +47,7 @@ categorical_features = [
 # Target (Output yang ingin kita prediksi)
 TARGET_FUEL = 'fuelConsumed'
 TARGET_LOAD = 'loadWeight'
-TARGET_DELAY = 'isDelayed' # <-- TARGET BARU KITA
+TARGET_DELAY = 'isDelayed' 
 
 # --- 3. Bersihkan Data ---
 all_needed_cols = numerical_features + categorical_features + [TARGET_FUEL, TARGET_LOAD, TARGET_DELAY]
@@ -77,7 +77,14 @@ pipeline_fuel = Pipeline(steps=[('preprocessor', preprocessor),
                                ])
 X_train, X_test, y_train, y_test = train_test_split(X, y_fuel, test_size=0.2, random_state=42)
 pipeline_fuel.fit(X_train, y_train)
-# ... (logika evaluasi) ...
+
+# Evaluasi
+preds = pipeline_fuel.predict(X_test)
+r2 = r2_score(y_test, preds)
+mae = mean_absolute_error(y_test, preds)
+print(f"Model Konsumsi BBM - R² Score: {r2:.4f}")
+print(f"Model Konsumsi BBM - Mean Absolute Error: {mae:,.2f} liter")
+
 joblib.dump(pipeline_fuel, os.path.join(MODEL_FOLDER, 'model_fuel.joblib'))
 print("✅ Model 'model_fuel.joblib' telah disimpan.")
 
@@ -88,7 +95,14 @@ pipeline_load = Pipeline(steps=[('preprocessor', preprocessor),
                                 ])
 X_train, X_test, y_train, y_test = train_test_split(X, y_load, test_size=0.2, random_state=42)
 pipeline_load.fit(X_train, y_train)
-# ... (logika evaluasi) ...
+
+# Evaluasi
+preds = pipeline_load.predict(X_test)
+r2 = r2_score(y_test, preds)
+mae = mean_absolute_error(y_test, preds)
+print(f"Model Berat Muatan - R² Score: {r2:.4f}")
+print(f"Model Berat Muatan - Mean Absolute Error: {mae:,.2f} ton")
+
 joblib.dump(pipeline_load, os.path.join(MODEL_FOLDER, 'model_load_weight.joblib'))
 print("✅ Model 'model_load_weight.joblib' telah disimpan.")
 
@@ -99,7 +113,18 @@ pipeline_delay = Pipeline(steps=[('preprocessor', preprocessor),
                                ])
 X_train, X_test, y_train, y_test = train_test_split(X, y_delay, test_size=0.2, random_state=42)
 pipeline_delay.fit(X_train, y_train)
-# ... (logika evaluasi) ...
+
+# Evaluasi
+preds = pipeline_delay.predict(X_test)
+preds_proba = pipeline_delay.predict_proba(X_test)[:, 1]
+acc = accuracy_score(y_test, preds)
+try:
+    auc = roc_auc_score(y_test, preds_proba)
+    print(f"Model Probabilitas Delay - AUC Score: {auc:.4f}")
+except ValueError:
+    print("Model Probabilitas Delay - AUC Score: N/A (Hanya satu kelas di test set)")
+print(f"Model Probabilitas Delay - Accuracy: {acc:.4f}")
+
 joblib.dump(pipeline_delay, os.path.join(MODEL_FOLDER, 'model_delay_probability.joblib'))
 print("✅ Model 'model_delay_probability.joblib' telah disimpan.")
 
