@@ -1,127 +1,111 @@
+import uvicorn
+import ollama
+import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-import uvicorn
-import pandas as pd
 from typing import List, Dict, Any, Optional
-import ollama
 
-# --- 1. Impor "Otak" Anda dari simulator.py ---
+# --- 1. IMPOR DARI SIMULATOR ---
 try:
     from simulator import (
-        CONFIG,  # Konfigurasi default
-        get_strategic_recommendations, # Agen 1 (Hybrid)
-        format_konteks_for_llm,      # Helper untuk menerjemahkan data ke AI
-        LLM_PROVIDER,                # Untuk mengecek apakah Ollama terhubung
-        OLLAMA_MODEL                 # Nama model Ollama
+        CONFIG, 
+        get_strategic_recommendations, 
+        format_konteks_for_llm, # Fungsi format agar JSON cantik
+        LLM_PROVIDER, 
+        OLLAMA_MODEL 
     )
     print("✅ Berhasil mengimpor 'otak' dari simulator.py")
 except ImportError as e:
-    print(f"❌ ERROR: Gagal mengimpor dari 'simulator.py'. Pastikan file ada. Detail: {e}")
+    print(f"❌ ERROR CRITICAL: Gagal mengimpor dari 'simulator.py'. Detail: {e}")
     exit()
 except Exception as e:
-    print(f"❌ ERROR saat inisialisasi simulator.py: {e}")
+    print(f"❌ ERROR saat inisialisasi simulator: {e}")
     exit()
 
-# --- 2. Inisialisasi Aplikasi API ---
-app = FastAPI(
-    title="Mining Ops API (Arsitektur Hybrid + Ollama)",
-    description="API untuk Agen Strategis (Top 3) dan Agen Chatbot (Follow-up) lokal."
-)
+app = FastAPI(title="Mining Ops AI API", version="2.0.0")
 
-# --- 3. Tentukan Model Input (Kontrak Data) ---
-
-# Model BARU untuk parameter finansial kustom
+# --- MODEL INPUT ---
 class FinancialParams(BaseModel):
-    HargaJualBatuBara: float = Field(800000, description="Harga Jual per Ton")
-    HargaSolar: float = Field(15000, description="Harga Solar per Liter")
-    BiayaPenaltiKeterlambatanKapal: float = Field(100000000, description="Biaya Penalti per Jam Antri")
+    HargaJualBatuBara: float = Field(800000)
+    HargaSolar: float = Field(15000)
+    BiayaPenaltiKeterlambatanKapal: float = Field(100000000)
+    BiayaRataRataInsiden: float = Field(50000000)
 
 class FixedConditions(BaseModel):
-    weatherCondition: str = "Cerah"
-    roadCondition: str = "GOOD"
-    shift: str = "SHIFT_1"
+    weatherCondition: str
+    roadCondition: str
+    shift: str
     target_road_id: str
     target_excavator_id: str
 
 class DecisionVariables(BaseModel):
-    alokasi_truk: List[int] = [5, 10]
-    jumlah_excavator: List[int] = [1, 2]
+    alokasi_truk: List[int]
+    jumlah_excavator: List[int]
 
 class RecommendationRequest(BaseModel):
-    """
-    Request body lengkap untuk endpoint strategi.
-    Termasuk 'financial_params' yang opsional.
-    """
     fixed_conditions: FixedConditions
     decision_variables: DecisionVariables
-    # --- PERUBAHAN DI SINI ---
-    financial_params: Optional[FinancialParams] = None # <-- KUNCI UNTUK WHAT-IF
+    financial_params: Optional[FinancialParams] = None 
 
 class ChatRequest(BaseModel):
     pertanyaan_user: str
     top_3_strategies_context: List[Dict[str, Any]]
 
-# --- 4. Buat Endpoint API ---
+# --- ENDPOINTS ---
 
 @app.post("/get_top_3_strategies")
 async def dapatkan_rekomendasi_strategis(request: RecommendationRequest):
-    """
-    ENDPOINT AGEN 1 (STRATEGIS - HYBRID):
-    Menerima kondisi lapangan, variabel keputusan,
-    dan parameter finansial kustom (opsional).
-    """
     try:
-        # --- LOGIKA BARU UNTUK MEMILIH PARAMETER ---
+        print(f"📡 Menerima request strategi baru...")
+        
         active_financial_params = {}
         if request.financial_params:
-            # 1. Jika FE mengirim parameter kustom, gunakan itu
             active_financial_params = request.financial_params.dict()
-            print("Info: Menjalankan simulasi dengan parameter finansial kustom dari FE.")
+            print("   ℹ️ Menggunakan Parameter Finansial Kustom")
         else:
-            # 2. Jika tidak, gunakan default dari server
             active_financial_params = CONFIG['financial_params']
-            print("Info: Menjalankan simulasi dengan parameter finansial default.")
+            print("   ℹ️ Menggunakan Parameter Finansial Default")
         
-        # Panggil "otak" AI dengan parameter finansial yang aktif
+        # 1. JALANKAN SIMULASI
         top_3_list = get_strategic_recommendations(
             request.fixed_conditions.dict(),
             request.decision_variables.dict(),
-            active_financial_params # Berikan parameter finansial ke mesin
+            active_financial_params 
         )
         
         if top_3_list:
-            return {
-                "top_3_strategies": top_3_list
-            }
+            # 2. FORMAT DATA AGAR COCOK DENGAN DASHBOARD (PENTING!)
+            # Ini mengubah data mentah menjadi struktur dengan 'KPI_PREDIKSI', 'INSTRUKSI_FLAT' dll
+            formatted_json_str = format_konteks_for_llm(top_3_list)
+            formatted_data = json.loads(formatted_json_str)
+            
+            return {"top_3_strategies": formatted_data}
         else:
-            raise HTTPException(status_code=500, detail="Gagal menjalankan optimisasi strategi.")
+            raise HTTPException(status_code=500, detail="Simulasi selesai tapi tidak menghasilkan rekomendasi valid.")
+            
     except Exception as e:
-        print(f"Error di /get_top_3_strategies: {e}")
-        raise HTTPException(status_code=500, detail=f"Error internal: {str(e)}")
-
+        print(f"❌ Error di /get_top_3_strategies: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 @app.post("/ask_chatbot")
 async def tanya_jawab_chatbot(request: ChatRequest):
-    """
-    ENDPOINT AGEN 2 (CHATBOT) - Ditenagai OLLAMA
-    (Endpoint ini tidak perlu diubah)
-    """
-    
     if LLM_PROVIDER != "ollama":
-        raise HTTPException(status_code=503, detail="Layanan Chatbot (Ollama) tidak terhubung di server.")
+        raise HTTPException(status_code=503, detail="Layanan Chatbot (Ollama) tidak terhubung.")
 
     try:
-        data_konteks_string = format_konteks_for_llm(request.top_3_strategies_context)
+        # Gunakan data yang dikirim dari dashboard (sudah terformat)
+        # Kita dump kembali ke string untuk prompt
+        data_konteks_string = json.dumps(request.top_3_strategies_context, indent=2)
         
         system_prompt = f"""
         !!! PERINTAH UTAMA: RESPONS ANDA HARUS SELALU DALAM BAHASA INDONESIA. !!!
-        PERAN ANDA: Asisten Analis Operasi Tambang...
-        DATA 3 STRATEGI TERBAIK (JSON):
+        PERAN ANDA: Kepala Teknik Tambang (KTT).
+        DATA OPERASIONAL:
         {data_konteks_string}
         ATURAN:
-        1. Jawab HANYA berdasarkan 3 strategi dalam DATA KONTEKS di atas.
-        2. Fokus pada 'ESTIMASI_PROFIT_SHIFT'.
-        3. Gunakan Bahasa Indonesia.
+        1. Jawab HANYA berdasarkan data di atas.
+        2. Fokus pada Profit, Fuel Ratio, dan Efisiensi.
+        3. Gunakan Bahasa Indonesia profesional.
         """
         
         messages_for_ollama = [
@@ -129,23 +113,13 @@ async def tanya_jawab_chatbot(request: ChatRequest):
             {'role': 'user', 'content': request.pertanyaan_user}
         ]
         
-        response = ollama.chat(
-            model=OLLAMA_MODEL,
-            messages=messages_for_ollama
-        )
-        
-        jawaban_ai = response['message']['content']
-        
-        return {"jawaban_ai": jawaban_ai}
+        response = ollama.chat(model=OLLAMA_MODEL, messages=messages_for_ollama)
+        return {"jawaban_ai": response['message']['content']}
 
     except Exception as e:
-        if "Connection refused" in str(e):
-             raise HTTPException(status_code=503, detail="Layanan Chatbot (Ollama) tidak berjalan di server.")
-        print(f"Error di /ask_chatbot: {e}")
-        raise HTTPException(status_code=500, detail=f"Error saat menghubungi Ollama: {str(e)}")
+        print(f"❌ Error Chatbot: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error Chatbot: {str(e)}")
 
-# --- 5. Jalankan Server API ---
 if __name__ == "__main__":
-    print("Menjalankan Uvicorn server di http://127.0.0.1:8000")
-    print("Buka http://127.0.0.1:8000/docs untuk melihat dokumentasi API.")
+    print("🚀 Memulai Server API...")
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -205,3 +205,110 @@ ENDPOINT 2: AGEN CHATBOT
     {
       "jawaban_ai": "Selisih profit antara Strategi 1 dan Strategi 2 adalah sekitar 316 Juta IDR. Ini karena Strategi 1..."
     }
+
+----------------------------------------------------------------------------------
+STRUKTUR FORMULIR (UI/UX SUGGESTION)
+----------------------------------------------------------------------------------
+
+Kami menyarankan membagi formulir input menjadi 3 Bagian (Section):
+
+BAGIAN 1: KONDISI LAPANGAN (Fixed Conditions)
+User memilih kondisi lingkungan saat ini.
+---------------------------------------------
+1.  Cuaca (Dropdown):
+    -   Label: "Cuaca Saat Ini"
+    -   Opsi: ["Cerah", "Hujan Ringan", "Hujan Lebat"]
+    -   Key JSON: fixed_conditions.weatherCondition
+
+2.  Kondisi Jalan (Dropdown):
+    -   Label: "Kondisi Jalan Tambang"
+    -   Opsi: ["GOOD", "FAIR", "POOR", "LICIN"]
+    -   Key JSON: fixed_conditions.roadCondition
+
+3.  Shift (Dropdown/Radio):
+    -   Label: "Shift Operasional"
+    -   Opsi: ["SHIFT_1", "SHIFT_2", "SHIFT_3"]
+    -   Key JSON: fixed_conditions.shift
+
+BAGIAN 2: SKENARIO ALAT (Decision Variables)
+User memilih opsi mana saja yang ingin diuji oleh AI.
+---------------------------------------------
+1.  Opsi Jumlah Truk (Checkbox Group):
+    -   Label: "Simulasikan Jumlah Truk:"
+    -   Opsi: [ ] 5 Unit, [ ] 10 Unit, [ ] 15 Unit
+    -   Key JSON: decision_variables.alokasi_truk (Array of Int)
+
+2.  Opsi Jumlah Excavator (Checkbox Group):
+    -   Label: "Simulasikan Jumlah Excavator:"
+    -   Opsi: [ ] 1 Unit, [ ] 2 Unit
+    -   Key JSON: decision_variables.jumlah_excavator (Array of Int)
+
+BAGIAN 3: ANALISIS EKONOMI / WHAT-IF (Advanced)
+User bisa mengubah asumsi harga. Sembunyikan di dalam menu "Advanced Settings" atau "Edit Parameter Harga".
+---------------------------------------------
+1.  Harga Solar (Number Input):
+    -   Label: "Harga Solar (IDR/Liter)"
+    -   Default: 15000
+    -   Key JSON: financial_params.HargaSolar
+
+2.  Harga Jual Batu Bara (Number Input):
+    -   Label: "Harga Jual (IDR/Ton)"
+    -   Default: 800000
+    -   Key JSON: financial_params.HargaJualBatuBara
+
+3.  Biaya Denda (Number Input):
+    -   Label: "Biaya Penalti Antrian (IDR/Jam)"
+    -   Default: 100000000
+    -   Key JSON: financial_params.BiayaPenaltiKeterlambatanKapal
+
+----------------------------------------------------------------------------------
+CONTOH PAYLOAD JSON (YANG DIKIRIM KE API)
+----------------------------------------------------------------------------------
+
+SKENARIO 1: USER STANDAR (Tanpa Edit Harga)
+Kirim tanpa key 'financial_params'. Server akan pakai default.
+
+{
+  "fixed_conditions": {
+    "weatherCondition": "Hujan Ringan",
+    "roadCondition": "FAIR",
+    "shift": "SHIFT_1",
+    "target_road_id": "cmhsbjn8x02s2maft90hi31ty",      <-- (Bisa di-hardcode dulu atau dari API lain)
+    "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom" <-- (Bisa di-hardcode dulu atau dari API lain)
+  },
+  "decision_variables": {
+    "alokasi_truk": [5, 10],
+    "jumlah_excavator": [1, 2]
+  }
+}
+
+SKENARIO 2: USER MELAKUKAN "WHAT-IF" (Harga Solar Naik)
+Kirim dengan key 'financial_params'.
+
+{
+  "fixed_conditions": {
+    "weatherCondition": "Cerah",
+    "roadCondition": "GOOD",
+    "shift": "SHIFT_1",
+    "target_road_id": "cmhsbjn8x02s2maft90hi31ty",
+    "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom"
+  },
+  "decision_variables": {
+    "alokasi_truk": [5, 10, 15],
+    "jumlah_excavator": [1, 2]
+  },
+  "financial_params": {
+    "HargaJualBatuBara": 800000,
+    "HargaSolar": 25000,              <-- USER MENGUBAH INI (Simulasi Harga Naik)
+    "BiayaPenaltiKeterlambatanKapal": 100000000
+  }
+}
+
+----------------------------------------------------------------------------------
+C. CATATAN PENTING
+----------------------------------------------------------------------------------
+1.  ID Rute & Excavator: Untuk tahap ini, silakan gunakan ID default yang ada di contoh JSON.
+    Nanti bisa kita buat endpoint terpisah untuk mengambil daftar ID tersebut.
+2.  Loading State: Karena simulasi ini menjalankan kalkulasi berat (SimPy + ML),
+    API mungkin butuh waktu 3-8 detik untuk merespons.
+    Pastikan UI menampilkan "Loading Spinner" atau pesan "AI sedang menghitung..." yang jelas.
