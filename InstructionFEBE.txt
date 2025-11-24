@@ -1,314 +1,157 @@
 ==================================================================================
- INSTRUKSI - PROYEK MINING VALUE CHAIN OPTIMIZATION 
-==================================================================================
-Tanggal: 13 November 2025
-Dari: Haikal (Machine Learning Engineer)
-Untuk: Tim Back-End (BE) & Front-End (FE)
-
-Dokumen ini berisi instruksi teknis lengkap untuk setup, deployment,
-dan konsumsi API "Otak" AI yang telah selesai dikembangkan.
-
----
-ARSITEKTUR FINAL:
----
-Sistem ini adalah "Simulasi Hybrid" yang berjalan di server:
-1.  Menggunakan SimPy untuk mengelola antrian (bottleneck) secara dinamis.
-2.  Menggunakan 3 Model ML (.joblib) yang dilatih dari data nyata untuk memprediksi
-    BBM, Muatan, dan Probabilitas Insiden.
-3.  Menggunakan data kalibrasi (rata-rata) untuk durasi siklus (hauling, loading, dll).
-4.  Menggunakan OLLAMA (llama3:8b) sebagai chatbot, sehingga 100% LOKAL dan
-    tidak ada data sensitif (strategi/profit) yang dikirim ke internet.
-
-Sistem ini memiliki dua agen:
-1.  AGEN STRATEGIS: Menjalankan simulasi hybrid untuk menemukan 3 strategi terbaik.
-2.  AGEN CHATBOT: Menjawab pertanyaan lanjutan HANYA tentang 3 strategi tersebut.
-
-==================================================================================
-BAGIAN 1: INSTRUKSI UNTUK TIM BACK-END (DEPLOYMENT)
+HANDOFF DOCUMENT: MINING OPS AI SYSTEM (V3.0 FINAL)
 ==================================================================================
 
-Tugas Anda adalah membuat `api.py` berjalan sebagai service di server.
-
----
-CHECKLIST DEPLOYMENT SERVER:
----
-
-1.  SETUP SERVER OLLAMA (WAJIB):
-    -   Instal Ollama di server (dari ollama.com).
-    -   Pastikan server Ollama berjalan (default di `http://localhost:11434`).
-    -   Tarik model LLM yang kita gunakan. Buka terminal server dan jalankan:
-        >> ollama pull llama3:8b
-    -   Pastikan model sudah ada dengan menjalankan:
-        >> ollama list
-
-2.  DEPLOY PAKET FILE:
-    -   Salin seluruh folder proyek ke server, dengan struktur folder yang WAJIB seperti ini:
-
-        / (Folder Proyek Utama)
-        |-- api.py          <-- (File ini yang akan Anda jalankan)
-        |-- simulator.py    <-- (File "otak" yang diimpor oleh api.py)
-        |-- requirements.txt
-        |
-        |-- data/
-        |   |-- trucks.csv
-        |   |-- excavators.csv
-        |   |-- operators.csv
-        |   |-- road_segments.csv
-        |   |-- maintenance_logs.csv
-        |
-        |-- models/
-            |-- model_fuel.joblib
-            |-- model_load_weight.joblib
-            |-- model_delay_probability.joblib
-            |-- numerical_columns.json
-            |-- categorical_columns.json
-
-3.  SETUP LINGKUNGAN PYTHON:
-    -   Sangat disarankan menggunakan virtual environment:
-        >> python -m venv venv
-        >> source venv/bin/activate  (atau .\venv\Scripts\activate di Windows)
-    -   Instal semua dependensi dari requirements:
-        >> pip install -r requirements.txt
-    -   (Ini akan menginstal fastapi, uvicorn, pandas, simpy, joblib, scikit-learn, ollama).
-
-4.  JALANKAN SERVER API:
-    -   Dari folder proyek utama, jalankan Uvicorn:
-        >> uvicorn api:app --host 0.0.0.0 --port 8000
-    -   `--host 0.0.0.0` penting agar API bisa diakses dari jaringan (bukan hanya localhost).
-    -   `--port 8000` bisa diganti sesuai kebutuhan (misal: 8080).
-
-5.  TESTING & HANDOFF URL:
-    -   Pastikan API berjalan dengan mengakses `http://[IP_SERVER_ANDA]:8000/docs` dari browser Anda.
-    -   Berikan URL ini (misal: `http://10.0.1.50:8000`) kepada Tim Front-End.
+Dokumen ini adalah panduan integrasi untuk sistem "Mining Value Chain Optimizer".
+Sistem ini menggabungkan simulasi fisik, prediksi machine learning, dan
+Generative AI (Ollama) untuk memberikan rekomendasi strategi tambang.
 
 ==================================================================================
-BAGIAN 2: INSTRUKSI UNTUK TIM FRONT-END (KONSUMSI API)
+BAGIAN 1: ISI FILE
 ==================================================================================
 
-Tugas Anda adalah "berbicara" dengan API yang telah disiapkan oleh Tim BE.
-Anda akan memanggil 2 endpoint secara berurutan.
+Pastikan struktur folder di server Anda persis seperti ini:
 
----
-ALUR PENGGUNA (USER FLOW) APLIKASI:
----
-
-STEP 1: USER MEMASUKKAN KONDISI
--   User memilih input dari UI (dropdown, text field, dll) untuk:
-    1.  **Kondisi Tetap** (misal: Cuaca 'Hujan Deras', Jalan 'POOR', Rute 'Pit 1 ke Stockpile').
-    2.  **Variabel Keputusan** (misal: Alokasi Truk [5, 10, 15], Jml Excavator [1, 2]).
-    3.  **(OPSIONAL) Parameter "What-If"** (misal: User mengedit Harga Solar menjadi 20000).
-
-STEP 2: FE MEMANGGIL AGEN STRATEGIS (ENDPOINT 1)
--   Saat user menekan "Cari Rekomendasi", aplikasi Anda mengirim permintaan `POST` ke:
--   URL: `http://[IP_SERVER_BE]:8000/get_top_3_strategies`
--   Body JSON harus sesuai kontrak di BAGIAN 3. Anda *harus* mengirim 'fixed_conditions' dan 'decision_variables'. 'financial_params' bersifat opsional.
-
-STEP 3: FE MENERIMA & MENAMPILKAN DATA
--   API akan merespons (mungkin butuh 5-10 detik, karena ini simulasi berat) dengan JSON:
-    { "top_3_strategies": [ {...}, {...}, {...} ] }
--   TUGAS PENTING: Anda harus **menyimpan** array `top_3_strategies` ini di *state* aplikasi Anda. Kita sebut ini `KONTEKS_CHAT`.
--   TUGAS FE: Render data ini ke dalam 3 "kontainer" atau "kartu" (sesuai desain UI/UX). Anda memiliki kontrol penuh atas tampilan. Gunakan `ESTIMASI_PROFIT_SHIFT` untuk mengurutkan.
-    -   Kontainer 1: "REKOMENDASI UTAMA" (array[0])
-    -   Kontainer 2: "PILIHAN EFISIEN" (array[1])
-    -   Kontainer 3: "PILIHAN ALTERNATIF" (array[2])
--   **Chatbot (Ollama) BELUM dipanggil di tahap ini.**
-
-STEP 4: USER BERTANYA DI CHATBOX
--   User melihat 3 kontainer tadi dan mengetik pertanyaan lanjutan (misal: "Kenapa Strategi 1 lebih untung?").
-
-STEP 5: FE MEMANGGIL AGEN CHATBOT (ENDPOINT 2)
--   Saat user menekan "Kirim" di chat, aplikasi Anda mengirim permintaan `POST` ke:
--   URL: `http://[IP_SERVER_BE]:8000/ask_chatbot`
--   Body JSON untuk panggilan ini **HARUS** berisi dua hal:
-    1.  `pertanyaan_user`: String pertanyaan dari user.
-    2.  `top_3_strategies_context`: Variabel `KONTEKS_CHAT` yang Anda simpan di STEP 3.
-
-STEP 6: FE MENAMPILKAN JAWABAN CHAT
--   API akan merespons dengan jawaban teks sederhana dari Ollama:
-    { "jawaban_ai": "Strategi 1 lebih untung karena tonasenya jauh lebih tinggi..." }
--   Tugas FE: Tampilkan `jawaban_ai` ini di UI chat Anda.
+/root_project/
+|-- api.py                 (SERVER UTAMA - Jalankan file ini)
+|-- simulator.py           (CORE ENGINE - Logika Simulasi & AI)
+|-- requirements.txt       (DEPENDENCIES - Daftar library)
+|
+|-- data/                  (DATABASE CSV - Wajib ada & bisa di-update)
+|   |-- trucks.csv
+|   |-- excavators.csv
+|   |-- operators.csv
+|   |-- road_segments.csv
+|   |-- sailing_schedules.csv  <-- (Data Jadwal Kapal)
+|   |-- vessels.csv            <-- (Data Master Kapal)
+|   |-- maintenance_logs.csv
+|
+|-- models/                (MODEL ML - Jangan diubah)
+|   |-- model_fuel.joblib
+|   |-- model_load_weight.joblib
+|   |-- model_delay_probability.joblib
+|   |-- numerical_columns.json
+|   |-- categorical_columns.json
 
 ==================================================================================
-BAGIAN 3: KONTRAK API (REFERENSI TEKNIS)
+BAGIAN 2: PANDUAN BACK-END (DEPLOYMENT)
 ==================================================================================
 
-Gunakan halaman `/docs` (http://[IP_SERVER_BE]:8000/docs) sebagai referensi interaktif utama.
+1. PRASYARAT SERVER (OLLAMA)
+   Sistem ini membutuhkan LLM lokal.
+   - Instal Ollama: https://ollama.com/download
+   - Jalankan server Ollama: `ollama serve`
+   - Download Model: `ollama pull `qwen2.5:7b`
+
+2. INSTALASI PYTHON
+   - Buat virtual environment (disarankan).
+   - Instal library: `pip install -r requirements.txt`
+
+3. MENJALANKAN API
+   - Gunakan Uvicorn:
+     >> uvicorn api:app --host 0.0.0.0 --port 8000
+
+4. API DOCUMENTATION (SWAGGER)
+   - Setelah server jalan, buka: `http://localhost:8000/docs`
+   - Gunakan halaman ini untuk testing manual.
+
+==================================================================================
+BAGIAN 3: PANDUAN FRONT-END (INTEGRASI UI)
+==================================================================================
+
+Aplikasi FE harus memiliki fitur input parameter, tampilan kartu hasil,
+dan chatbox interaktif.
 
 ---
-ENDPOINT 1: AGEN STRATEGIS
+ENDPOINT 1: DAPATKAN REKOMENDASI STRATEGI
 ---
--   URL: `/get_top_3_strategies`
--   Method: `POST`
--   Request Body (Contoh "What-If"):
+* **URL:** `POST /get_top_3_strategies`
+* **Tujuan:** Mengirim kondisi lapangan untuk disimulasikan.
+* **Payload JSON (Request):**
+
     {
       "fixed_conditions": {
-        "weatherCondition": "Hujan Ringan",
-        "roadCondition": "FAIR",
+        "weatherCondition": "Hujan Ringan",    // Pilihan: Cerah, Hujan Ringan, Hujan Lebat
+        "roadCondition": "FAIR",               // Pilihan: GOOD, FAIR, POOR, LICIN
         "shift": "SHIFT_1",
-        "target_road_id": "cmhsbjn8x02s2maft90hi31ty",
-        "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom"
+        "target_road_id": "cmhsbjn...",        // ID Rute (dari database)
+        "target_excavator_id": "cmhsbjp...",   // ID Excavator (dari database)
+        "target_schedule_id": "cmhsbjs...",    // ID Jadwal Kapal (dari database)
+        "simulation_start_date": "2025-11-14T08:00:00Z" // (Opsional) Waktu mulai
       },
       "decision_variables": {
-        "alokasi_truk": [5, 10],
-        "jumlah_excavator": [1, 2]
+        "alokasi_truk": [5, 10, 15],           // Opsi jumlah truk yg dites
+        "jumlah_excavator": [1, 2]             // Opsi jumlah exc yg dites
       },
-      "financial_params": {
+      "financial_params": {                    // (OPSIONAL - FITUR WHAT IF)
         "HargaJualBatuBara": 800000,
-        "HargaSolar": 20000,
-        "BiayaPenaltiKeterlambatanKapal": 100000000
+        "HargaSolar": 15000,
+        "BiayaPenaltiKeterlambatanKapal": 100000000,
+        "BiayaDemurragePerJam": 50000000
       }
     }
-    
--   Request Body (Contoh "Default"):
-    (Kirim JSON yang sama seperti di atas, tetapi HAPUS seluruh kunci "financial_params".
-    Server akan otomatis menggunakan harga default).
 
--   Response Body (Sukses):
+* **Response JSON (Data untuk UI):**
+    Server akan mengembalikan List berisi 3 strategi terbaik.
+    Gunakan data ini untuk membuat 3 Kartu/Container.
+
     {
       "top_3_strategies": [
         {
-          "alokasi_truk": 10,
-          "jumlah_excavator": 2,
-          "weatherCondition": "Hujan Ringan",
-          "roadCondition": "FAIR",
-          "shift": "SHIFT_1",
-          "target_road_id": "cmhsbjn8x02s2maft90hi31ty",
-          "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom",
-          "Z_SCORE_PROFIT": 923805210.96228,
-          "total_tonase": 1638.0,
-          "total_bbm_liter": 1284.097046959087,
-          "total_waktu_antri_jam": 3.6733333333333364,
-          "jumlah_siklus_selesai": 60
+          "OPSI_1": {
+            "TYPE": "REKOMENDASI UTAMA",
+            "KPI_PREDIKSI": {
+               "PROFIT": "857 Juta IDR",
+               "PRODUKSI": "1,537 Ton",
+               "FUEL_RATIO": "0.83 L/Ton",
+               "IDLE_ANTRIAN": "3.6 Jam"
+            },
+            "INSTRUKSI_FLAT": {
+               "JUMLAH_DUMP_TRUCK": "10 Unit",
+               "ALAT_MUAT_TARGET": "PIT-01 (Unit: Kobelco...)",
+               "JALUR_ANGKUT": "Pit 1 ke Stockpile (3.5 km)"
+            },
+            "ANALISIS_KAPAL": "Kapal: MV Coal | Status: DELAY_RISK | Denda: 50 Juta",
+            "SOP_KESELAMATAN": "SLIPPERY: Batasi kecepatan..."
+          }
         },
-        { ... (Strategi 2) ... },
-        { ... (Strategi 3) ... }
+        ... (Opsi 2 & 3)
       ]
     }
 
+    *** PENTING: Simpan seluruh Response JSON ini di state aplikasi FE sebagai 'KONTEKS'.
 
 ---
-ENDPOINT 2: AGEN CHATBOT
+ENDPOINT 2: CHATBOT AI (Q&A)
 ---
--   URL: `/ask_chatbot`
--   Method: `POST`
--   Request Body (Contoh):
+* **URL:** `POST /ask_chatbot`
+* **Tujuan:** User bertanya detail tentang strategi di atas.
+* **Payload JSON (Request):**
+
     {
-      "pertanyaan_user": "Berapa selisih profit antara strategi 1 dan 2?",
-      "top_3_strategies_context": [
-        { "Z_SCORE_PROFIT": 923805210.96, "alokasi_truk": 10, ... },
-        { "Z_SCORE_PROFIT": 607445328.60, "alokasi_truk": 5, ... },
-        { "Z_SCORE_PROFIT": 446725830.39, "alokasi_truk": 5, ... }
-      ]
+      "pertanyaan_user": "Kenapa strategi 1 profitnya paling tinggi?",
+      "top_3_strategies_context": [ ...MASUKKAN JSON DARI RESPONSE SEBELUMNYA DI SINI... ]
     }
 
--   Response Body (Sukses):
+* **Response JSON:**
     {
-      "jawaban_ai": "Selisih profit antara Strategi 1 dan Strategi 2 adalah sekitar 316 Juta IDR. Ini karena Strategi 1..."
+      "jawaban_ai": "Strategi 1 memiliki profit tertinggi karena volume produksinya (1.537 Ton) jauh melampaui biaya operasionalnya..."
     }
 
-----------------------------------------------------------------------------------
-STRUKTUR FORMULIR (UI/UX SUGGESTION)
-----------------------------------------------------------------------------------
+---
+ENDPOINT 3 & 4: MANAJEMEN DATA (ADMIN PANEL)
+---
+Gunakan ini jika User ingin menambah data tanpa menyentuh CSV.
+* `POST /add_vessel` (Nama Kapal, Kapasitas)
+* `POST /add_schedule` (ETA, ETD, Target Muatan)
 
-Kami menyarankan membagi formulir input menjadi 3 Bagian (Section):
+==================================================================================
+CATATAN KHUSUS LOGISTIK KAPAL
+==================================================================================
+Jika User memilih jadwal kapal yang deadline-nya sudah dekat (atau lewat),
+Output "PROFIT" mungkin bernilai NEGATIF (karena denda Demurrage).
+Tampilkan status ini dengan warna MERAH di UI ("Risk Alert").
 
-BAGIAN 1: KONDISI LAPANGAN (Fixed Conditions)
-User memilih kondisi lingkungan saat ini.
----------------------------------------------
-1.  Cuaca (Dropdown):
-    -   Label: "Cuaca Saat Ini"
-    -   Opsi: ["Cerah", "Hujan Ringan", "Hujan Lebat"]
-    -   Key JSON: fixed_conditions.weatherCondition
-
-2.  Kondisi Jalan (Dropdown):
-    -   Label: "Kondisi Jalan Tambang"
-    -   Opsi: ["GOOD", "FAIR", "POOR", "LICIN"]
-    -   Key JSON: fixed_conditions.roadCondition
-
-3.  Shift (Dropdown/Radio):
-    -   Label: "Shift Operasional"
-    -   Opsi: ["SHIFT_1", "SHIFT_2", "SHIFT_3"]
-    -   Key JSON: fixed_conditions.shift
-
-BAGIAN 2: SKENARIO ALAT (Decision Variables)
-User memilih opsi mana saja yang ingin diuji oleh AI.
----------------------------------------------
-1.  Opsi Jumlah Truk (Checkbox Group):
-    -   Label: "Simulasikan Jumlah Truk:"
-    -   Opsi: [ ] 5 Unit, [ ] 10 Unit, [ ] 15 Unit
-    -   Key JSON: decision_variables.alokasi_truk (Array of Int)
-
-2.  Opsi Jumlah Excavator (Checkbox Group):
-    -   Label: "Simulasikan Jumlah Excavator:"
-    -   Opsi: [ ] 1 Unit, [ ] 2 Unit
-    -   Key JSON: decision_variables.jumlah_excavator (Array of Int)
-
-BAGIAN 3: ANALISIS EKONOMI / WHAT-IF (Advanced)
-User bisa mengubah asumsi harga. Sembunyikan di dalam menu "Advanced Settings" atau "Edit Parameter Harga".
----------------------------------------------
-1.  Harga Solar (Number Input):
-    -   Label: "Harga Solar (IDR/Liter)"
-    -   Default: 15000
-    -   Key JSON: financial_params.HargaSolar
-
-2.  Harga Jual Batu Bara (Number Input):
-    -   Label: "Harga Jual (IDR/Ton)"
-    -   Default: 800000
-    -   Key JSON: financial_params.HargaJualBatuBara
-
-3.  Biaya Denda (Number Input):
-    -   Label: "Biaya Penalti Antrian (IDR/Jam)"
-    -   Default: 100000000
-    -   Key JSON: financial_params.BiayaPenaltiKeterlambatanKapal
-
-----------------------------------------------------------------------------------
-CONTOH PAYLOAD JSON (YANG DIKIRIM KE API)
-----------------------------------------------------------------------------------
-
-SKENARIO 1: USER STANDAR (Tanpa Edit Harga)
-Kirim tanpa key 'financial_params'. Server akan pakai default.
-
-{
-  "fixed_conditions": {
-    "weatherCondition": "Hujan Ringan",
-    "roadCondition": "FAIR",
-    "shift": "SHIFT_1",
-    "target_road_id": "cmhsbjn8x02s2maft90hi31ty",      <-- (Bisa di-hardcode dulu atau dari API lain)
-    "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom" <-- (Bisa di-hardcode dulu atau dari API lain)
-  },
-  "decision_variables": {
-    "alokasi_truk": [5, 10],
-    "jumlah_excavator": [1, 2]
-  }
-}
-
-SKENARIO 2: USER MELAKUKAN "WHAT-IF" (Harga Solar Naik)
-Kirim dengan key 'financial_params'.
-
-{
-  "fixed_conditions": {
-    "weatherCondition": "Cerah",
-    "roadCondition": "GOOD",
-    "shift": "SHIFT_1",
-    "target_road_id": "cmhsbjn8x02s2maft90hi31ty",
-    "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom"
-  },
-  "decision_variables": {
-    "alokasi_truk": [5, 10, 15],
-    "jumlah_excavator": [1, 2]
-  },
-  "financial_params": {
-    "HargaJualBatuBara": 800000,
-    "HargaSolar": 25000,              <-- USER MENGUBAH INI (Simulasi Harga Naik)
-    "BiayaPenaltiKeterlambatanKapal": 100000000
-  }
-}
-
-----------------------------------------------------------------------------------
-C. CATATAN PENTING
-----------------------------------------------------------------------------------
-1.  ID Rute & Excavator: Untuk tahap ini, silakan gunakan ID default yang ada di contoh JSON.
-    Nanti bisa kita buat endpoint terpisah untuk mengambil daftar ID tersebut.
-2.  Loading State: Karena simulasi ini menjalankan kalkulasi berat (SimPy + ML),
-    API mungkin butuh waktu 3-8 detik untuk merespons.
-    Pastikan UI menampilkan "Loading Spinner" atau pesan "AI sedang menghitung..." yang jelas.
+==================================================================================
+Jika API merespon "500 Error", cek terminal server untuk log detailnya.
+Pastikan file CSV di folder /data tidak korup/kosong.
