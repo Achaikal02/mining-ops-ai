@@ -44,9 +44,7 @@ try:
     # Muat Jadwal Kapal
     try:
         DB_SCHEDULES = pd.read_csv(os.path.join(DATA_FOLDER, 'sailing_schedules.csv')).set_index('id')
-        
-        # Gunakan errors='coerce' untuk mengubah data "0" atau format salah menjadi NaT (Null)
-        # Gunakan format='mixed' agar bisa membaca berbagai format tanggal
+ 
         DB_SCHEDULES['etsLoading'] = pd.to_datetime(
             DB_SCHEDULES['etsLoading'], 
             errors='coerce', 
@@ -128,7 +126,7 @@ def get_features_for_prediction(truck_id, operator_id, road_id, excavator_id, we
             'bucketCapacity': excavator['bucketCapacity'],
             'rating': operator['rating'], 
             'operator_experience_years': op_exp,
-            'distance': road['distance'], # Kunci 'distance' (Bukan distance_road)
+            'distance': road['distance'],
             'gradient': road['gradient'],
             'truck_age_days': truck_age_days, 
             'days_since_last_maintenance': days_since_maint,
@@ -185,12 +183,11 @@ def truck_process_hybrid(env, truck_id, operator_id, resources, global_metrics, 
         avg_hauling = 31.76 * weather_factor
         yield env.timeout(avg_hauling / 60.0)
         
-        # B. QUEUE & LOADING (Di sini perbaikan utamanya)
-        # ---------------------------------------------------------
+        # B. QUEUE & LOADING 
         waktu_masuk_antrian = env.now  # 1. Catat waktu datang
         
         with excavator_resource.request() as req:
-            yield req  # 2. TUNGGU sampai dapat giliran (SimPy menghitung ini)
+            yield req  # 2. TUNGGU sampai dapat giliran 
             
             # 3. Sudah dapat giliran! Catat waktu sekarang
             waktu_keluar_antrian = env.now
@@ -204,7 +201,6 @@ def truck_process_hybrid(env, truck_id, operator_id, resources, global_metrics, 
             # Loading sedikit lebih lambat jika hujan
             actual_loading = avg_loading * (1.1 if "Hujan" in str(weather) else 1.0)
             yield env.timeout(actual_loading / 60.0)
-        # ---------------------------------------------------------
             
         # C. RETURN (Pulang)
         avg_return = 25.29 * weather_factor
@@ -224,7 +220,7 @@ def calculate_shipment_risk(simulated_tonnage_8h, schedule_id, financial_params,
     """
     Menghitung risiko demurrage DAN Estimasi Waktu Penyelesaian.
     """
-    # ... (Bagian pengecekan ID dan load data jadwal SAMA SEPERTI SEBELUMNYA) ...
+
     if DB_SCHEDULES.empty or schedule_id not in DB_SCHEDULES.index:
         return {"status": "NO_SHIP", "demurrage_cost": 0, "info": "Tidak ada jadwal", "days_to_complete": 0}
 
@@ -238,7 +234,6 @@ def calculate_shipment_risk(simulated_tonnage_8h, schedule_id, financial_params,
     if 'DB_VESSELS' in globals() and schedule['vesselId'] in DB_VESSELS.index:
         vessel_name = DB_VESSELS.loc[schedule['vesselId']]['name']
 
-    # ... (Bagian deadline SAMA SEPERTI SEBELUMNYA) ...
     now = sim_start_time
     deadline = schedule['etsLoading']
     if deadline.tzinfo is None: deadline = deadline.tz_localize('UTC')
@@ -248,19 +243,19 @@ def calculate_shipment_risk(simulated_tonnage_8h, schedule_id, financial_params,
         return {
             "status": "LATE", "demurrage_cost": 100000000, 
             "info": f"Kapal {vessel_name} telat!", "vessel_name": vessel_name,
-            "days_to_complete": 999 # Telat parah
+            "days_to_complete": 999 
         }
 
-    # --- PERHITUNGAN BARU: ESTIMASI WAKTU SELESAI ---
-    prod_per_hour = simulated_tonnage_8h / 8.0 # Kecepatan produksi per jam
+    # --- ESTIMASI WAKTU SELESAI ---
+    prod_per_hour = simulated_tonnage_8h / 8.0 
     
     if prod_per_hour <= 0: 
         hours_needed = 9999
     else: 
         hours_needed = remaining_target / prod_per_hour
 
-    days_needed = hours_needed / 24.0 # Konversi ke hari kerja (asumsi 24 jam kerja)
-    # ------------------------------------------------
+    days_needed = hours_needed / 24.0 
+   
 
     variance = time_remaining_hours - hours_needed
     demurrage = 0
@@ -275,7 +270,7 @@ def calculate_shipment_risk(simulated_tonnage_8h, schedule_id, financial_params,
         "status": status, 
         "demurrage_cost": demurrage,
         "hours_needed": hours_needed,
-        "days_to_complete": days_needed, # <-- DATA BARU
+        "days_to_complete": days_needed, 
         "info": f"Selesai dalam {days_needed:.1f} Hari ({hours_needed:.0f} Jam)"
     }
 
@@ -303,7 +298,7 @@ def run_hybrid_simulation(skenario, financial_params, duration_hours=24):
     for i in range(skenario['alokasi_truk']):
         t_id = trucks[i % len(trucks)]
         o_id = ops[i % len(ops)]
-        # Pass sim_start_time ke proses truk
+
         env.process(truck_process_hybrid(env, t_id, o_id, res, metrics, skenario, sim_start_time))
         
     env.run(until=duration_hours)
@@ -366,10 +361,10 @@ def format_konteks_for_llm(top_3_list):
         
         if ship.get('status') != "NO_SHIP":
             days = ship.get('days_to_complete', 0)
-            estimasi_waktu = f"{days:.1f} Hari" # Format: "2.5 Hari"
+            estimasi_waktu = f"{days:.1f} Hari" 
             
             ship_str = f"Kapal: {ship.get('vessel_name')} | Status: {ship.get('status')}"
-            ship_str += f" | Estimasi Selesai: {estimasi_waktu}" # Info untuk AI
+            ship_str += f" | Estimasi Selesai: {estimasi_waktu}" 
             
             if ship.get('demurrage_cost') > 0:
                 ship_str += f" | DENDA: {format_currency(ship.get('demurrage_cost'))}"
@@ -431,7 +426,7 @@ if __name__ == "__main__":
             'weatherCondition': 'Cerah', 'roadCondition': 'GOOD', 'shift': 'SHIFT_1',
             'target_road_id': DB_ROADS.index[0], 'target_excavator_id': DB_EXCAVATORS.index[0],
             'target_schedule_id': sch_id,
-            'simulation_start_date': pd.Timestamp.now().isoformat() # Default Start Date
+            'simulation_start_date': pd.Timestamp.now().isoformat() 
         }
         vars = {'alokasi_truk': [5, 10], 'jumlah_excavator': [1, 2]}
         res = get_strategic_recommendations(fixed, vars, CONFIG['financial_params'])

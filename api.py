@@ -17,7 +17,7 @@ try:
         get_strategic_recommendations, # Fungsi Agen Strategis (Hybrid)
         format_konteks_for_llm,        # Helper formatter data (JSON Cantik)
         LLM_PROVIDER,                  # Cek status Ollama
-        OLLAMA_MODEL                   # Nama model (qwen2.5:7b / llama3:8b)
+        OLLAMA_MODEL                   # Nama model 
     )
     print("✅ Berhasil mengimpor 'otak' dari simulator.py")
 except ImportError as e:
@@ -76,7 +76,7 @@ class RecommendationRequest(BaseModel):
 class ChatRequest(BaseModel):
     """Payload untuk Endpoint Chatbot"""
     pertanyaan_user: str
-    top_3_strategies_context: List[Dict[str, Any]] # Konteks strategi dari request sebelumnya
+    top_3_strategies_context: List[Dict[str, Any]] 
 
 # Model untuk Menambah Data Baru (Kapal/Jadwal)
 class NewVessel(BaseModel):
@@ -122,13 +122,11 @@ async def dapatkan_rekomendasi_strategis(request: RecommendationRequest):
         top_3_list = get_strategic_recommendations(
             request.fixed_conditions.dict(),
             request.decision_variables.dict(),
-            active_financial_params # Berikan parameter finansial ke mesin
+            active_financial_params 
         )
         
         if top_3_list:
-            # 3. Format Data (PENTING UNTUK DASHBOARD)
-            # Mengubah data mentah menjadi struktur cantik (KPI_PREDIKSI, INSTRUKSI_FLAT)
-            # agar dashboard.py bisa membacanya.
+            # 3. Format Data 
             formatted_json_str = format_konteks_for_llm(top_3_list)
             formatted_data = json.loads(formatted_json_str)
             
@@ -187,7 +185,7 @@ async def tanya_jawab_chatbot(request: ChatRequest):
         ]
         
         response = ollama.chat(
-            model=OLLAMA_MODEL, # Menggunakan model yang didefinisikan di simulator.py
+            model=OLLAMA_MODEL, 
             messages=messages_for_ollama
         )
         

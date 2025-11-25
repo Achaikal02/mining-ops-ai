@@ -49,7 +49,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNGSI HELPER: MUAT DATA KAPAL (ANTI-GAGAL) ---
+# --- FUNGSI HELPER: MUAT DATA KAPAL ---
 @st.cache_data
 def load_vessel_options():
     """
@@ -65,8 +65,7 @@ def load_vessel_options():
             return {"Data Jadwal Tidak Ditemukan": None}
 
         df_sched = pd.read_csv(sched_path)
-        
-        # Coba gabungkan dengan nama kapal jika ada
+
         has_name = False
         if os.path.exists(ves_path):
             try:
@@ -74,9 +73,9 @@ def load_vessel_options():
                 df_sched = pd.merge(df_sched, df_vess, left_on='vesselId', right_on='id', suffixes=('', '_ves'))
                 has_name = True
             except:
-                pass # Gagal merge, pakai ID saja
+                pass 
 
-        # 2. Filter Data Aktif (Jika kolom status ada)
+        # 2. Filter Data Aktif 
         active_df = df_sched
         if 'status' in df_sched.columns:
             # Filter status yang aktif saja
@@ -120,9 +119,7 @@ def load_vessel_options():
 # --- TAB LAYOUT ---
 tab_sim, tab_data = st.tabs(["🚀 Simulasi Operasional", "📝 Manajemen Data Kapal"])
 
-# =============================================================================
 # TAB 1: SIMULASI (DASHBOARD UTAMA)
-# =============================================================================
 with tab_sim:
     # --- SIDEBAR ---
     with st.sidebar:
@@ -291,9 +288,7 @@ with tab_sim:
     else:
         st.info("👈 Silakan atur parameter di sidebar dan klik **'Jalankan Simulasi'**.")
 
-# =============================================================================
 # TAB 2: MANAJEMEN DATA (ADMIN)
-# =============================================================================
 with tab_data:
     st.header("🚢 Manajemen Logistik Kapal")
     
@@ -349,7 +344,7 @@ with tab_data:
                     res = requests.post(f"{API_URL}/add_schedule", json=payload_sched)
                     if res.status_code == 200: 
                         st.success("Jadwal berhasil dibuat!")
-                        load_vessel_options.clear() # Clear cache agar dropdown update
+                        load_vessel_options.clear() 
                     else: st.error(f"Gagal: {res.text}")
                 except: st.error("Koneksi API Gagal")
     
