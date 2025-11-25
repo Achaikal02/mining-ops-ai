@@ -44,10 +44,27 @@ try:
     # Muat Jadwal Kapal
     try:
         DB_SCHEDULES = pd.read_csv(os.path.join(DATA_FOLDER, 'sailing_schedules.csv')).set_index('id')
-        DB_SCHEDULES['etsLoading'] = pd.to_datetime(DB_SCHEDULES['etsLoading'])
-        # Muat Data Master Kapal (Nama, Kapasitas)
-        try: DB_VESSELS = pd.read_csv(os.path.join(DATA_FOLDER, 'vessels.csv')).set_index('id')
-        except: DB_VESSELS = pd.DataFrame()
+        
+        # Gunakan errors='coerce' untuk mengubah data "0" atau format salah menjadi NaT (Null)
+        # Gunakan format='mixed' agar bisa membaca berbagai format tanggal
+        DB_SCHEDULES['etsLoading'] = pd.to_datetime(
+            DB_SCHEDULES['etsLoading'], 
+            errors='coerce', 
+            format='mixed'
+        )
+        
+        # Hapus jadwal yang tanggalnya rusak (NaT) agar tidak merusak perhitungan nanti
+        invalid_count = DB_SCHEDULES['etsLoading'].isna().sum()
+        if invalid_count > 0:
+            print(f"   ⚠️ Warning: Ditemukan {invalid_count} jadwal dengan tanggal invalid (diabaikan).")
+            DB_SCHEDULES = DB_SCHEDULES.dropna(subset=['etsLoading'])
+            
+        print(f"   > Schedules: {len(DB_SCHEDULES)} jadwal valid dimuat.")
+        
+        try:
+            DB_VESSELS = pd.read_csv(os.path.join(DATA_FOLDER, 'vessels.csv')).set_index('id')
+        except:
+            DB_VESSELS = pd.DataFrame()
     except Exception as e:
         print(f"   ⚠️ Warning: Gagal memuat data kapal ({e})")
         DB_SCHEDULES = pd.DataFrame()
@@ -126,7 +143,10 @@ def get_features_for_prediction(truck_id, operator_id, road_id, excavator_id, we
         return pd.DataFrame(columns=MODEL_COLUMNS)
 
 def truck_process_hybrid(env, truck_id, operator_id, resources, global_metrics, skenario, sim_start_time):
-    """Kehidupan satu truk (Hybrid: SimPy + ML + Kalibrasi)"""
+    """
+    Kehidupan satu truk.
+    PERBAIKAN BUG: Logika hitung antrian (Queue Time) diperbaiki.
+    """
     weather = skenario['weatherCondition']
     road_cond = skenario['roadCondition']
     shift = skenario['shift']
@@ -136,16 +156,16 @@ def truck_process_hybrid(env, truck_id, operator_id, resources, global_metrics, 
     road_id = skenario.get('target_road_id')
     if road_id not in DB_ROADS.index: road_id = DB_ROADS.index[0]
 
-    exc_res = resources['excavator']
+    excavator_resource = resources['excavator']
+    
     try: kapasitas_ton = DB_TRUCKS.loc[truck_id]['capacity']
     except: return 
 
-    # Faktor Cuaca (SOP)
-    weather_factor = 1.25 if "Hujan" in str(weather) else 1.15 if "Licin" in str(road_cond) else 1.0
+    weather_factor = 1.25 if "Hujan" in str(weather) else 1.0
 
     while True:
-        # 1. Prediksi ML (BBM, Muatan, Risiko)
-        # Gunakan waktu sekarang simulasi untuk fitur dinamis
+        # --- 1. PREDIKSI ML ---
+        # Hitung waktu simulasi saat ini untuk fitur dinamis
         current_sim_time = sim_start_time + pd.Timedelta(seconds=env.now*3600)
         
         feats = get_features_for_prediction(truck_id, operator_id, road_id, excavator_id, weather, road_cond, shift, current_sim_time)
@@ -155,70 +175,108 @@ def truck_process_hybrid(env, truck_id, operator_id, resources, global_metrics, 
             try:
                 fuel = MODEL_FUEL.predict(feats)[0]
                 raw_load = MODEL_LOAD.predict(feats)[0]
-                load = raw_load * 0.87 # Koreksi Load Factor
+                load = raw_load * 0.87
                 delay = MODEL_DELAY.predict_proba(feats)[0][1]
             except: pass
 
-        # 2. Simulasi Fisik (Angka Kalibrasi Presisi)
+        # --- 2. SIMULASI FISIK ---
+        
+        # A. HAULING (Pergi)
         avg_hauling = 31.76 * weather_factor
         yield env.timeout(avg_hauling / 60.0)
         
-        with exc_res.request() as req:
-            yield req
-            # Antri selesai, mulai loading
-            avg_loading = 11.02
-            yield env.timeout(avg_loading / 60.0)
+        # B. QUEUE & LOADING (Di sini perbaikan utamanya)
+        # ---------------------------------------------------------
+        waktu_masuk_antrian = env.now  # 1. Catat waktu datang
+        
+        with excavator_resource.request() as req:
+            yield req  # 2. TUNGGU sampai dapat giliran (SimPy menghitung ini)
             
+            # 3. Sudah dapat giliran! Catat waktu sekarang
+            waktu_keluar_antrian = env.now
+            
+            # 4. Hitung durasi menunggu
+            durasi_antri = waktu_keluar_antrian - waktu_masuk_antrian
+            global_metrics['total_waktu_antri_jam'] += durasi_antri
+            
+            # 5. Proses Loading
+            avg_loading = 11.02
+            # Loading sedikit lebih lambat jika hujan
+            actual_loading = avg_loading * (1.1 if "Hujan" in str(weather) else 1.0)
+            yield env.timeout(actual_loading / 60.0)
+        # ---------------------------------------------------------
+            
+        # C. RETURN (Pulang)
         avg_return = 25.29 * weather_factor
         yield env.timeout(avg_return / 60.0)
         
+        # D. DUMPING
         avg_dump = 8.10
         yield env.timeout(avg_dump / 60.0)
         
-        # 3. Pencatatan
+        # --- 3. PENCATATAN ---
         global_metrics['total_tonase'] += load
-        global_metrics['total_bbm_liter'] += (fuel * 1.6) # Koreksi BBM (Pergi+Pulang)
+        global_metrics['total_bbm_liter'] += (fuel * 1.6)
         global_metrics['total_probabilitas_delay'] += delay
         global_metrics['jumlah_siklus_selesai'] += 1
 
 def calculate_shipment_risk(simulated_tonnage_8h, schedule_id, financial_params, sim_start_time):
-    """Menghitung risiko demurrage kapal."""
+    """
+    Menghitung risiko demurrage DAN Estimasi Waktu Penyelesaian.
+    """
+    # ... (Bagian pengecekan ID dan load data jadwal SAMA SEPERTI SEBELUMNYA) ...
     if DB_SCHEDULES.empty or schedule_id not in DB_SCHEDULES.index:
-        return {"status": "NO_SHIP", "demurrage_cost": 0, "info": "Tidak ada jadwal kapal"}
+        return {"status": "NO_SHIP", "demurrage_cost": 0, "info": "Tidak ada jadwal", "days_to_complete": 0}
 
     schedule = DB_SCHEDULES.loc[schedule_id]
     target = schedule.get('plannedQuantity', 0)
     current = schedule.get('actualQuantity', 0)
     if pd.isna(current): current = 0
-    remaining = max(0, target - current)
+    remaining_target = max(0, target - current)
     
-    v_name = schedule['vesselId']
+    vessel_name = schedule['vesselId']
     if 'DB_VESSELS' in globals() and schedule['vesselId'] in DB_VESSELS.index:
-        v_name = DB_VESSELS.loc[schedule['vesselId']]['name']
+        vessel_name = DB_VESSELS.loc[schedule['vesselId']]['name']
 
-    # Gunakan Waktu Simulasi (bukan Waktu Sekarang)
+    # ... (Bagian deadline SAMA SEPERTI SEBELUMNYA) ...
     now = sim_start_time
     deadline = schedule['etsLoading']
     if deadline.tzinfo is None: deadline = deadline.tz_localize('UTC')
+    time_remaining_hours = (deadline - now).total_seconds() / 3600.0
     
-    hours_left = (deadline - now).total_seconds() / 3600.0
-    
-    if hours_left <= 0:
-        return {"status": "LATE", "demurrage_cost": 100000000, "info": "Kapal sudah telat!", "vessel_name": v_name}
+    if time_remaining_hours <= 0:
+        return {
+            "status": "LATE", "demurrage_cost": 100000000, 
+            "info": f"Kapal {vessel_name} telat!", "vessel_name": vessel_name,
+            "days_to_complete": 999 # Telat parah
+        }
 
-    prod_per_hour = simulated_tonnage_8h / 8.0
-    hours_needed = remaining / prod_per_hour if prod_per_hour > 0 else 9999
-    variance = hours_left - hours_needed
+    # --- PERHITUNGAN BARU: ESTIMASI WAKTU SELESAI ---
+    prod_per_hour = simulated_tonnage_8h / 8.0 # Kecepatan produksi per jam
     
+    if prod_per_hour <= 0: 
+        hours_needed = 9999
+    else: 
+        hours_needed = remaining_target / prod_per_hour
+
+    days_needed = hours_needed / 24.0 # Konversi ke hari kerja (asumsi 24 jam kerja)
+    # ------------------------------------------------
+
+    variance = time_remaining_hours - hours_needed
     demurrage = 0
     status = "ON_SCHEDULE"
+    
     if variance < 0:
         status = "DELAY_RISK"
         demurrage = abs(variance) * financial_params.get('BiayaDemurragePerJam', 50000000)
 
     return {
-        "vessel_name": v_name, "status": status, "demurrage_cost": demurrage,
-        "hours_needed": hours_needed, "info": f"Butuh {hours_needed:.1f} Jam (Sisa: {hours_left:.1f} Jam)"
+        "vessel_name": vessel_name, 
+        "status": status, 
+        "demurrage_cost": demurrage,
+        "hours_needed": hours_needed,
+        "days_to_complete": days_needed, # <-- DATA BARU
+        "info": f"Selesai dalam {days_needed:.1f} Hari ({hours_needed:.0f} Jam)"
     }
 
 def run_hybrid_simulation(skenario, financial_params, duration_hours=24):
@@ -304,8 +362,15 @@ def format_konteks_for_llm(top_3_list):
         # Data Kapal
         ship = res.get('shipment_analysis', {})
         ship_str = "Tidak ada kapal."
+        estimasi_waktu = "N/A"
+        
         if ship.get('status') != "NO_SHIP":
+            days = ship.get('days_to_complete', 0)
+            estimasi_waktu = f"{days:.1f} Hari" # Format: "2.5 Hari"
+            
             ship_str = f"Kapal: {ship.get('vessel_name')} | Status: {ship.get('status')}"
+            ship_str += f" | Estimasi Selesai: {estimasi_waktu}" # Info untuk AI
+            
             if ship.get('demurrage_cost') > 0:
                 ship_str += f" | DENDA: {format_currency(ship.get('demurrage_cost'))}"
 
@@ -321,6 +386,7 @@ def format_konteks_for_llm(top_3_list):
                 "KPI_PREDIKSI": {
                     "PROFIT": profit_fmt,
                     "PRODUKSI": f"{ton:,.0f} Ton",
+                    "ESTIMASI_DURASI": estimasi_waktu,
                     "FUEL_RATIO": fr_fmt,
                     "IDLE_ANTRIAN": f"{res.get('total_waktu_antri_jam', 0):.1f} Jam"
                 },

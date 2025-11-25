@@ -54,8 +54,10 @@ st.markdown("""
 def load_vessel_options():
     """
     Membaca CSV Jadwal dan Kapal untuk membuat opsi dropdown.
+    Versi Aman: Menangani error jika kolom tidak lengkap.
     """
     try:
+        # 1. Baca CSV
         sched_path = os.path.join('data', 'sailing_schedules.csv')
         ves_path = os.path.join('data', 'vessels.csv')
         
@@ -64,42 +66,56 @@ def load_vessel_options():
 
         df_sched = pd.read_csv(sched_path)
         
-        # Coba gabungkan dengan nama kapal
+        # Coba gabungkan dengan nama kapal jika ada
         has_name = False
         if os.path.exists(ves_path):
             try:
                 df_vess = pd.read_csv(ves_path)
                 df_sched = pd.merge(df_sched, df_vess, left_on='vesselId', right_on='id', suffixes=('', '_ves'))
                 has_name = True
-            except: pass
+            except:
+                pass # Gagal merge, pakai ID saja
 
-        # Filter Data Aktif
+        # 2. Filter Data Aktif (Jika kolom status ada)
         active_df = df_sched
         if 'status' in df_sched.columns:
+            # Filter status yang aktif saja
             active_df = df_sched[df_sched['status'].isin(['SCHEDULED', 'ARRIVED', 'LOADING', 'ANCHORAGE', 'STANDBY'])]
         
-        if active_df.empty: active_df = df_sched.head(20)
+        # Jika hasil filter kosong atau error, gunakan semua data
+        if active_df.empty:
+            active_df = df_sched.head(20) # Ambil 20 teratas
 
+        # 3. Buat Dictionary Opsi
         options = {}
         for _, row in active_df.iterrows():
+            # Ambil ID Jadwal
             sch_id = row.get('id', 'UNKNOWN_ID')
+            
+            # Ambil Nama Kapal
             v_name = row.get('name', row.get('vesselId', 'Unknown Vessel'))
             
+            # Ambil Tanggal ETA
             eta_str = "N/A"
             if 'etaLoading' in row and pd.notna(row['etaLoading']):
-                try: eta_str = pd.to_datetime(row['etaLoading']).strftime('%d-%b')
+                try:
+                    eta_str = pd.to_datetime(row['etaLoading']).strftime('%d-%b')
                 except: pass
                 
+            # Ambil Target Tonase
             target_str = "0"
             if 'plannedQuantity' in row and pd.notna(row['plannedQuantity']):
                 target_str = f"{row['plannedQuantity']:,.0f}"
             
+            # Format Label: "MV Coal Hunter | 12-Nov | 50k T"
             label = f"{v_name} | ETA: {eta_str} | Target: {target_str} T"
             options[label] = sch_id
             
         return options
-    except Exception:
-        return {"Gagal memuat data kapal": None}
+
+    except Exception as e:
+        # Jika error parah, kembalikan opsi default agar dashboard tidak crash
+        return {f"Error memuat kapal: {str(e)}": None}
 
 # --- TAB LAYOUT ---
 tab_sim, tab_data = st.tabs(["🚀 Simulasi Operasional", "📝 Manajemen Data Kapal"])
@@ -126,10 +142,10 @@ with tab_sim:
             st.markdown("**🚢 Target Pengapalan**")
             vessel_map = load_vessel_options()
             selected_vessel_label = st.selectbox("Pilih Jadwal Kapal:", list(vessel_map.keys()))
-            selected_schedule_id = vessel_map[selected_vessel_label]
+            selected_schedule_id = vessel_map.get(selected_vessel_label)
 
         with st.expander("2. Variabel Keputusan", expanded=True):
-            truck_opts = st.multiselect("Truk", [5, 10, 15, 20], default=[5, 10])
+            truck_opts = st.multiselect("Truk", [5, 10, 15, 20, 25], default=[5, 10])
             exc_opts = st.multiselect("Excavator", [1, 2, 3], default=[1, 2])
             
         with st.expander("3. Parameter Ekonomi (What-If)", expanded=False):
@@ -156,8 +172,8 @@ with tab_sim:
                         "weatherCondition": weather,
                         "roadCondition": road,
                         "shift": shift,
-                        "target_road_id": "cmhsbjn8x02s2maft90hi31ty", # Default ID
-                        "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom",
+                        "target_road_id": "cmhsbjn8x02s2maft90hi31ty", # Default ID (Ganti jika perlu)
+                        "target_excavator_id": "cmhsbjpma05ddmaft5kv95dom", # Default ID (Ganti jika perlu)
                         "target_schedule_id": selected_schedule_id,
                         "simulation_start_date": sim_start_iso
                     },
@@ -178,7 +194,7 @@ with tab_sim:
                     if response.status_code == 200:
                         data = response.json()
                         st.session_state.strategies_context = data['top_3_strategies']
-                        st.session_state.chat_history = []
+                        st.session_state.chat_history = [] # Reset chat jika simulasi baru
                         st.toast("Simulasi Selesai!", icon="✅")
                     else:
                         st.error(f"API Error ({response.status_code}): {response.text}")
@@ -208,9 +224,11 @@ with tab_sim:
                     
                     c1, c2 = st.columns(2)
                     c1.metric("Produksi", kpi['PRODUKSI'])
-                    c2.metric("Fuel Ratio", kpi['FUEL_RATIO'])
+                    c2.metric("Durasi", kpi.get('ESTIMASI_DURASI', 'N/A')) # New Metric
                     
-                    st.metric("Idle/Antrian", kpi['IDLE_ANTRIAN'])
+                    c3, c4 = st.columns(2)
+                    c3.metric("Fuel Ratio", kpi['FUEL_RATIO'])
+                    c4.metric("Idle/Antrian", kpi['IDLE_ANTRIAN'])
                     
                     st.markdown("---")
                     st.caption(f"🚢 **STATUS LOGISTIK**")
@@ -274,7 +292,7 @@ with tab_sim:
         st.info("👈 Silakan atur parameter di sidebar dan klik **'Jalankan Simulasi'**.")
 
 # =============================================================================
-# TAB 2: MANAJEMEN DATA
+# TAB 2: MANAJEMEN DATA (ADMIN)
 # =============================================================================
 with tab_data:
     st.header("🚢 Manajemen Logistik Kapal")
@@ -304,6 +322,7 @@ with tab_data:
             vessel_dict = dict(zip(vessel_list, vessel_ids))
         except: 
             vessel_list = ["Manual Input"]
+            vessel_dict = {}
             
         with st.form("form_schedule"):
             v_choice = st.selectbox("Pilih Kapal", vessel_list)
@@ -328,7 +347,9 @@ with tab_data:
                 }
                 try:
                     res = requests.post(f"{API_URL}/add_schedule", json=payload_sched)
-                    if res.status_code == 200: st.success("Jadwal berhasil dibuat!")
+                    if res.status_code == 200: 
+                        st.success("Jadwal berhasil dibuat!")
+                        load_vessel_options.clear() # Clear cache agar dropdown update
                     else: st.error(f"Gagal: {res.text}")
                 except: st.error("Koneksi API Gagal")
     
@@ -336,6 +357,6 @@ with tab_data:
     st.markdown("### 📋 Database Jadwal Saat Ini")
     try:
         df_show = pd.read_csv('data/sailing_schedules.csv')
-        st.dataframe(df_show)
+        st.dataframe(df_show.sort_values('createdAt', ascending=False))
     except:
         st.info("Belum ada data jadwal.")

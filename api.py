@@ -15,7 +15,7 @@ try:
     from simulator import (
         CONFIG,                        # Konfigurasi Default
         get_strategic_recommendations, # Fungsi Agen Strategis (Hybrid)
-        format_konteks_for_llm,        # Helper formatter data
+        format_konteks_for_llm,        # Helper formatter data (JSON Cantik)
         LLM_PROVIDER,                  # Cek status Ollama
         OLLAMA_MODEL                   # Nama model (qwen2.5:7b / llama3:8b)
     )
@@ -33,7 +33,7 @@ except Exception as e:
 app = FastAPI(
     title="Mining Ops AI API",
     description="Backend API untuk simulasi tambang hybrid, logistik kapal, dan chatbot KTT (Ollama).",
-    version="3.0.0"
+    version="3.1.0"
 )
 
 # --- 3. DEFINISI MODEL INPUT (DATA CONTRACT) ---
@@ -128,6 +128,7 @@ async def dapatkan_rekomendasi_strategis(request: RecommendationRequest):
         if top_3_list:
             # 3. Format Data (PENTING UNTUK DASHBOARD)
             # Mengubah data mentah menjadi struktur cantik (KPI_PREDIKSI, INSTRUKSI_FLAT)
+            # agar dashboard.py bisa membacanya.
             formatted_json_str = format_konteks_for_llm(top_3_list)
             formatted_data = json.loads(formatted_json_str)
             
